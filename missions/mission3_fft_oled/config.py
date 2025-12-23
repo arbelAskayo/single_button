@@ -11,7 +11,7 @@
 # ------------------------------------------------------------
 SCL_PIN = 22          # I2C clock pin
 SDA_PIN = 21          # I2C data pin
-I2C_FREQ = 400000     # I2C frequency in Hz (400kHz is standard for SSD1306)
+I2C_FREQ = 100000     # I2C frequency in Hz (400kHz is standard for SSD1306)
 
 # ------------------------------------------------------------
 # OLED Display Configuration
@@ -48,7 +48,7 @@ LOOP_AUDIO = True         # Loop audio file when reaching end
 # ------------------------------------------------------------
 # When True, generates a synthetic sine wave instead of reading WAV file.
 # Also activates automatically if WAV file is not found.
-SELF_TEST = True
+SELF_TEST = False
 
 # Self-test parameters
 TEST_FREQ_START = 200     # Starting frequency for sweep (Hz)

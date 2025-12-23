@@ -11,7 +11,7 @@
 # ------------------------------------------------------------
 SCL_PIN = 22          # I2C clock pin
 SDA_PIN = 21          # I2C data pin
-I2C_FREQ = 400000     # I2C frequency in Hz (400kHz is standard for SSD1306)
+I2C_FREQ = 100000     # I2C frequency in Hz (400kHz is standard for SSD1306)
 
 # ------------------------------------------------------------
 # OLED Display Configuration
