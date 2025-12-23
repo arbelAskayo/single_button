@@ -31,7 +31,7 @@ import time
 
 # Import our modules
 import config
-from fft import fft, magnitude, get_hann_window, apply_window
+from fft import fft, get_hann_window, apply_window_inplace
 from wav_player import create_audio_source
 from oled_vis import init_display, show_message, show_error, SpectrumVisualizer
 
@@ -95,15 +95,22 @@ def run_visualizer():
     visualizer = SpectrumVisualizer(display, config)
     
     # ------------------------------------------------------------
-    # Pre-allocate Buffers
+    # Pre-allocate Buffers (CRITICAL for avoiding MemoryError)
     # ------------------------------------------------------------
     print("\n[Main] Pre-allocating buffers...")
     
-    # Get the Hann window (cached)
+    # Get the Hann window (cached, allocated once)
     window = get_hann_window(config.FFT_SIZE)
     
-    # Pre-allocate sample buffer
+    # Pre-allocate sample buffer - reused every frame
     samples = [0.0] * config.FFT_SIZE
+    
+    # Pre-allocate FFT result buffer - list of (real, imag) tuples
+    fft_result = [(0.0, 0.0)] * config.FFT_SIZE
+    
+    # Pre-allocate magnitude buffer
+    num_bins = config.FFT_SIZE // 2
+    magnitudes = [0.0] * num_bins
     
     gc.collect()
     print(f"[Main] Free memory after init: {gc.mem_free()} bytes")
@@ -120,17 +127,16 @@ def run_visualizer():
     
     try:
         while True:
-            # Read audio samples
-            new_samples = audio_source.read_block(config.FFT_SIZE)
+            # Fill sample buffer in-place (no allocation)
+            samples_read = audio_source.fill_block(samples)
             
-            # Check for end of file
-            if len(new_samples) < config.FFT_SIZE:
+            # Check for end of file (WAV files only)
+            if samples_read < config.FFT_SIZE:
                 if audio_source.is_eof():
                     if config.LOOP_AUDIO:
                         print("[Main] End of audio, looping...")
                         audio_source.reset()
-                        # Pad with zeros for this frame
-                        new_samples.extend([0.0] * (config.FFT_SIZE - len(new_samples)))
+                        # Buffer already zero-filled by fill_block
                     else:
                         print("[Main] End of audio, stopping...")
                         show_message(display, [
@@ -140,22 +146,21 @@ def run_visualizer():
                             ""
                         ])
                         break
-                else:
-                    # Pad with zeros
-                    new_samples.extend([0.0] * (config.FFT_SIZE - len(new_samples)))
             
-            # Copy to pre-allocated buffer
-            for i in range(len(new_samples)):
-                samples[i] = new_samples[i]
+            # Apply window function in-place (no allocation)
+            apply_window_inplace(samples, window)
             
-            # Apply window function
-            windowed = apply_window(samples, window)
+            # Compute FFT (still allocates internally, but less than before)
+            fft_out = fft(samples)
             
-            # Compute FFT
-            fft_result = fft(windowed)
+            # Copy FFT result to preallocated buffer
+            for i in range(len(fft_out)):
+                fft_result[i] = fft_out[i]
             
-            # Get magnitude spectrum (first half only - positive frequencies)
-            magnitudes = magnitude(fft_result, config.FFT_SIZE // 2)
+            # Compute magnitudes into preallocated buffer
+            for i in range(num_bins):
+                real, imag = fft_result[i]
+                magnitudes[i] = (real * real + imag * imag) ** 0.5
             
             # Update visualization
             visualizer.update(magnitudes)
@@ -164,7 +169,7 @@ def run_visualizer():
             if config.FRAME_DELAY_MS > 0:
                 time.sleep_ms(config.FRAME_DELAY_MS)
             
-            # FPS calculation
+            # FPS calculation and periodic GC
             frame_count += 1
             if frame_count % fps_update_interval == 0:
                 elapsed = time.ticks_diff(time.ticks_ms(), start_time)
@@ -196,4 +201,3 @@ def run_visualizer():
 # Entry point
 if __name__ == "__main__":
     run_visualizer()
-

@@ -114,25 +114,25 @@ class WavReader:
         print(f"[WAV] Bits: {self.bits_per_sample}")
         print(f"[WAV] Total samples: {self.total_samples}")
     
-    def read_block(self, n):
+    def fill_block(self, buffer):
         """
-        Read n samples from the WAV file.
+        Fill a preallocated buffer with samples from WAV file.
         Samples are normalized to [-1.0, 1.0] range.
         For stereo files, channels are averaged to mono.
         
         Args:
-            n: Number of samples to read
+            buffer: Preallocated list/array to fill with samples
             
         Returns:
-            List of n float samples, or fewer if EOF reached
+            Number of samples actually written (may be less at EOF)
         """
-        samples = []
+        n = len(buffer)
         bytes_per_sample = self.bits_per_sample // 8
         bytes_needed = n * bytes_per_sample * self.num_channels
         
         data = self.file.read(bytes_needed)
         if len(data) == 0:
-            return samples
+            return 0
         
         # Calculate how many complete samples we got
         actual_samples = len(data) // (bytes_per_sample * self.num_channels)
@@ -143,28 +143,43 @@ class WavReader:
             if self.num_channels == 1:
                 # Mono
                 if self.bits_per_sample == 8:
-                    # 8-bit unsigned (0-255) -> (-1.0, 1.0)
                     value = data[offset]
-                    sample = (value - 128) / 128.0
+                    buffer[i] = (value - 128) / 128.0
                 else:
-                    # 16-bit signed (-32768 to 32767) -> (-1.0, 1.0)
                     value = struct.unpack('<h', data[offset:offset+2])[0]
-                    sample = value / 32768.0
+                    buffer[i] = value / 32768.0
             else:
                 # Stereo - average channels
                 if self.bits_per_sample == 8:
                     left = (data[offset] - 128) / 128.0
                     right = (data[offset + 1] - 128) / 128.0
-                    sample = (left + right) / 2.0
+                    buffer[i] = (left + right) / 2.0
                 else:
                     left = struct.unpack('<h', data[offset:offset+2])[0] / 32768.0
                     right = struct.unpack('<h', data[offset+2:offset+4])[0] / 32768.0
-                    sample = (left + right) / 2.0
-            
-            samples.append(sample)
+                    buffer[i] = (left + right) / 2.0
         
-        self.samples_read += len(samples)
-        return samples
+        # Zero-fill remainder if we got fewer samples
+        for i in range(actual_samples, n):
+            buffer[i] = 0.0
+        
+        self.samples_read += actual_samples
+        return actual_samples
+    
+    def read_block(self, n):
+        """
+        Read n samples from the WAV file (allocates new list).
+        NOTE: Use fill_block() in main loop to avoid memory allocation.
+        
+        Args:
+            n: Number of samples to read
+            
+        Returns:
+            List of n float samples, or fewer if EOF reached
+        """
+        samples = [0.0] * n
+        count = self.fill_block(samples)
+        return samples[:count] if count < n else samples
     
     def reset(self):
         """Reset to the beginning of audio data."""
@@ -237,9 +252,72 @@ class SineGenerator:
         self.frequency = start_freq
         print(f"[SineGen] Sweep enabled: {start_freq} Hz -> {end_freq} Hz over {duration}s")
     
+    def fill_block(self, buffer):
+        """
+        Fill a preallocated buffer with sine wave samples.
+        Zero-allocation version for use in main loop.
+        
+        Args:
+            buffer: Preallocated list/array to fill with samples
+            
+        Returns:
+            Number of samples written (always len(buffer))
+        """
+        n = len(buffer)
+        two_pi = 6.283185307179586  # 2 * pi precomputed
+        phase_increment = two_pi * self.frequency / self.sample_rate
+        
+        # Cache instance variables for faster access
+        phase = self.phase
+        amplitude = self.amplitude
+        sweep_enabled = self.sweep_enabled
+        
+        if sweep_enabled:
+            # Sweep mode - frequency changes during block
+            sweep_samples = self.sweep_samples
+            total_sweep_samples = self.sweep_duration * self.sample_rate
+            sweep_direction = self.sweep_direction
+            sweep_start = self.sweep_start_freq
+            sweep_range = self.sweep_end_freq - self.sweep_start_freq
+            sample_rate = self.sample_rate
+            
+            for i in range(n):
+                buffer[i] = amplitude * math.sin(phase)
+                phase += phase_increment
+                if phase > two_pi:
+                    phase -= two_pi
+                
+                sweep_samples += 1
+                if sweep_samples >= total_sweep_samples:
+                    sweep_samples = 0
+                    sweep_direction = -sweep_direction
+                
+                progress = sweep_samples / total_sweep_samples
+                if sweep_direction > 0:
+                    freq = sweep_start + progress * sweep_range
+                else:
+                    freq = sweep_start + sweep_range - progress * sweep_range
+                phase_increment = two_pi * freq / sample_rate
+            
+            # Write back state
+            self.sweep_samples = sweep_samples
+            self.sweep_direction = sweep_direction
+            self.frequency = freq
+        else:
+            # Fixed frequency - simpler loop
+            for i in range(n):
+                buffer[i] = amplitude * math.sin(phase)
+                phase += phase_increment
+                if phase > two_pi:
+                    phase -= two_pi
+        
+        self.phase = phase
+        return n
+    
     def read_block(self, n):
         """
-        Generate n samples of sine wave.
+        Generate n samples of sine wave (allocates new list).
+        NOTE: Use fill_block() in main loop to avoid memory allocation.
         
         Args:
             n: Number of samples to generate
@@ -247,37 +325,8 @@ class SineGenerator:
         Returns:
             List of n float samples in [-amplitude, amplitude] range
         """
-        samples = []
-        phase_increment = 2 * math.pi * self.frequency / self.sample_rate
-        
-        for _ in range(n):
-            sample = self.amplitude * math.sin(self.phase)
-            samples.append(sample)
-            
-            self.phase += phase_increment
-            if self.phase > 2 * math.pi:
-                self.phase -= 2 * math.pi
-            
-            # Update frequency for sweep mode
-            if self.sweep_enabled:
-                self.sweep_samples += 1
-                total_sweep_samples = self.sweep_duration * self.sample_rate
-                
-                if self.sweep_samples >= total_sweep_samples:
-                    # Reverse sweep direction
-                    self.sweep_samples = 0
-                    self.sweep_direction *= -1
-                
-                # Calculate current frequency based on sweep position
-                progress = self.sweep_samples / total_sweep_samples
-                if self.sweep_direction > 0:
-                    self.frequency = self.sweep_start_freq + progress * (self.sweep_end_freq - self.sweep_start_freq)
-                else:
-                    self.frequency = self.sweep_end_freq - progress * (self.sweep_end_freq - self.sweep_start_freq)
-                
-                # Update phase increment for new frequency
-                phase_increment = 2 * math.pi * self.frequency / self.sample_rate
-        
+        samples = [0.0] * n
+        self.fill_block(samples)
         return samples
     
     def reset(self):
@@ -322,9 +371,43 @@ class MultiToneGenerator:
         
         print(f"[MultiTone] Frequencies: {frequencies} Hz")
     
+    def fill_block(self, buffer):
+        """
+        Fill a preallocated buffer with mixed tone samples.
+        Zero-allocation version for use in main loop.
+        
+        Args:
+            buffer: Preallocated list/array to fill with samples
+            
+        Returns:
+            Number of samples written (always len(buffer))
+        """
+        n = len(buffer)
+        two_pi = 6.283185307179586
+        num_tones = len(self.frequencies)
+        amplitude = self.amplitude
+        
+        # Cache phase increments (computed once per block, not per sample)
+        # Using local list to avoid repeated attribute lookups
+        phases = self.phases
+        sample_rate = self.sample_rate
+        frequencies = self.frequencies
+        
+        for i in range(n):
+            sample = 0.0
+            for t in range(num_tones):
+                sample += amplitude * math.sin(phases[t])
+                phases[t] += two_pi * frequencies[t] / sample_rate
+                if phases[t] > two_pi:
+                    phases[t] -= two_pi
+            buffer[i] = sample
+        
+        return n
+    
     def read_block(self, n):
         """
-        Generate n samples of mixed tones.
+        Generate n samples of mixed tones (allocates new list).
+        NOTE: Use fill_block() in main loop to avoid memory allocation.
         
         Args:
             n: Number of samples to generate
@@ -332,23 +415,14 @@ class MultiToneGenerator:
         Returns:
             List of n float samples
         """
-        samples = []
-        phase_increments = [2 * math.pi * f / self.sample_rate for f in self.frequencies]
-        
-        for _ in range(n):
-            sample = 0.0
-            for i, phase in enumerate(self.phases):
-                sample += self.amplitude * math.sin(phase)
-                self.phases[i] += phase_increments[i]
-                if self.phases[i] > 2 * math.pi:
-                    self.phases[i] -= 2 * math.pi
-            samples.append(sample)
-        
+        samples = [0.0] * n
+        self.fill_block(samples)
         return samples
     
     def reset(self):
         """Reset all phases."""
-        self.phases = [0.0] * len(self.frequencies)
+        for i in range(len(self.phases)):
+            self.phases[i] = 0.0
     
     def is_eof(self):
         """Never reaches EOF."""
@@ -415,4 +489,3 @@ def create_audio_source(config):
             duration=config.TEST_SWEEP_TIME
         )
         return gen
-

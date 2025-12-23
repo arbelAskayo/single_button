@@ -58,6 +58,7 @@ def generate_hann_window(n):
 def apply_window(samples, window):
     """
     Apply a window function to samples (element-wise multiplication).
+    NOTE: This allocates a new list. Use apply_window_inplace() in main loop.
     
     Args:
         samples: List of sample values
@@ -67,6 +68,20 @@ def apply_window(samples, window):
         List of windowed samples
     """
     return [s * w for s, w in zip(samples, window)]
+
+
+def apply_window_inplace(samples, window):
+    """
+    Apply a window function to samples in-place (zero allocation).
+    Modifies the samples buffer directly.
+    
+    Args:
+        samples: List of sample values (modified in-place)
+        window: List of window coefficients (same length as samples)
+    """
+    n = len(samples)
+    for i in range(n):
+        samples[i] = samples[i] * window[i]
 
 
 def _bit_reverse(n, bits):
