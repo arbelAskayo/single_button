@@ -23,13 +23,13 @@ OLED_ADDR = 0x3C      # Default I2C address (0x3C or 0x3D)
 # ------------------------------------------------------------
 # FFT Configuration
 # ------------------------------------------------------------
-FFT_SIZE = 256        # Number of samples per FFT frame (must be power of 2)
+FFT_SIZE = 128        # Number of samples per FFT frame (must be power of 2)
 SAMPLE_RATE = 8000    # Expected sample rate in Hz
 
 # ------------------------------------------------------------
 # Visualization Configuration
 # ------------------------------------------------------------
-NUM_BARS = 32         # Number of frequency bars to display
+NUM_BARS = 16         # Number of frequency bars to display
 BAR_WIDTH = 3         # Width of each bar in pixels (128/32 = 4, minus 1 for gap)
 BAR_GAP = 1           # Gap between bars in pixels
 EMA_ALPHA = 0.3       # Exponential moving average smoothing (0.0-1.0, higher = less smooth)
@@ -48,7 +48,7 @@ LOOP_AUDIO = True         # Loop audio file when reaching end
 # ------------------------------------------------------------
 # When True, generates a synthetic sine wave instead of reading WAV file.
 # Also activates automatically if WAV file is not found.
-SELF_TEST = False
+SELF_TEST = True
 
 # Self-test parameters
 TEST_FREQ_START = 200     # Starting frequency for sweep (Hz)
